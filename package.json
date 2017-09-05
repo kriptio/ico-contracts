@@ -1,0 +1,13 @@
+{
+  "name": "ico",
+  "version": "0.0.1",
+  "description": "ICO contracts template",
+  "scripts": {
+    "test": "truffle test"
+  },
+  "author": "482.solutions",
+  "license": "SEE LICENCE IN LICENCE.MD",
+  "dependencies": {
+    "zeppelin-solidity": "^1.2.0"
+  }
+}
