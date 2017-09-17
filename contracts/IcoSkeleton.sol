@@ -36,8 +36,8 @@ contract IcoSkeleton is Ownable {
 
     /// The amount of tokens sold
     uint256 public sold;
-    /// The amount of Ether payed from each address
-    mapping (address => uint256) public payedBy;
+    /// The amount of Ether paid from each address
+    mapping (address => uint256) public paidBy;
     /// The amount of Ether raised at the current moment
     uint256 public currentCap;
 
@@ -141,7 +141,7 @@ contract IcoSkeleton is Ownable {
         uint256 tokensBought;
         uint256 etherSpent;
         (tokensBought, etherSpent) = buy(msg.sender, msg.value);
-        payedBy[msg.sender] = payedBy[msg.sender].add(etherSpent);
+        paidBy[msg.sender] = paidBy[msg.sender].add(etherSpent);
         Purchase(msg.sender, tokensBought);
         msg.sender.transfer(msg.value.sub(etherSpent));
     }
@@ -184,9 +184,9 @@ contract IcoSkeleton is Ownable {
     /** @dev The function for investors to return their money in case of failure */
     function refund() {
         require(status == Status.Refund || status == Status.Aborted);
-        uint256 refundAmount = payedBy[msg.sender];
+        uint256 refundAmount = paidBy[msg.sender];
         require(refundAmount > 0);
-        payedBy[msg.sender] = 0;
+        paidBy[msg.sender] = 0;
         Refund(msg.sender, refundAmount);
         msg.sender.transfer(refundAmount);
     }
