@@ -1,26 +1,26 @@
-pragma solidity ^0.4.11;
+pragma solidity ^0.4.18;
 
 contract SafeMath {
 
-    function safeMul(uint256 a, uint256 b) internal constant returns (uint256 ) {
+    function safeMul(uint256 a, uint256 b) internal pure returns (uint256 ) {
         uint256 c = a * b;
         assert(a == 0 || c / a == b);
         return c;
     }
 
-    function safeDiv(uint256 a, uint256 b) internal constant returns (uint256 ) {
+    function safeDiv(uint256 a, uint256 b) internal pure returns (uint256 ) {
         assert(b > 0);
         uint256 c = a / b;
         assert(a == b * c + a % b);
         return c;
     }
 
-    function safeSub(uint256 a, uint256 b) internal constant returns (uint256 ) {
+    function safeSub(uint256 a, uint256 b) internal pure returns (uint256 ) {
         assert(b <= a);
         return a - b;
     }
 
-    function safeAdd(uint256 a, uint256 b) internal constant returns (uint256 ) {
+    function safeAdd(uint256 a, uint256 b) internal pure returns (uint256 ) {
         uint256 c = a + b;
         assert(c >= a);
         return c;
@@ -234,10 +234,6 @@ contract Pausable is Ownable {
     }
 }
 
-contract TokenSpender {
-    function receiveApproval(address _from, uint256 _value);
-}
-
 contract CommonBsToken is StandardToken, MultiOwnable {
 
     string public name;
@@ -264,7 +260,7 @@ contract CommonBsToken is StandardToken, MultiOwnable {
     event Burn(address indexed _burner, uint256 _value);
 
     modifier onlyUnlocked() {
-        if (!isOwner(msg.sender) && locked) throw;
+        require(isOwner(msg.sender) || !locked);
         _;
     }
 
@@ -358,14 +354,6 @@ contract CommonBsToken is StandardToken, MultiOwnable {
 
         return true;
     }
-
-    /* Approve and then communicate the approved contract in a single tx */
-    function approveAndCall(address _spender, uint256 _value) public {
-        TokenSpender spender = TokenSpender(_spender);
-        if (approve(_spender, _value)) {
-            spender.receiveApproval(msg.sender, _value);
-        }
-    }
 }
 
 contract CommonBsPresale is SafeMath, Ownable, Pausable {
@@ -394,8 +382,8 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
     // TODO implement
     uint256 public minWeiToAccept = 10 ether;
 
-    uint256 public maxCapWei = 17000 ether;
-    uint public tokensPerWei = 400 * 1.25; // Ordinary price: 1 ETH = 400 tokens. Plus 25% bonus during presale.
+    uint256 public maxCapWei = 8000 ether;
+    uint public tokensPerWei = 1000 * 1.25; // Ordinary price: 1 ETH = 400 tokens. Plus 25% bonus during presale.
 
     uint public startTime; // Will be setup once in a constructor from now().
     uint public endTime = 1520600400; // 2018-03-09T13:00:00Z
@@ -407,10 +395,6 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
     uint256 public totalEthSales      = 0; // Total amount of ETH contributions during this crowdsale.
     uint256 public totalExternalSales = 0; // Total amount of external contributions (BTC, LTC, USD, etc.) during this crowdsale.
     uint256 public weiReceived        = 0; // Total amount of wei received during this crowdsale smart contract.
-
-    uint public finalizedTime = 0; // Unix timestamp when finalize() was called.
-
-    bool public saleEnabled = true;   // if false, then contract will not sell tokens on payment received
 
     event BeneficiaryChanged(address indexed _oldAddress, address indexed _newAddress);
     event NotifierChanged(address indexed _oldAddress, address indexed _newAddress);
@@ -428,9 +412,9 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
         _;
     }
 
-    function CommonBsPresale(address _token, address _beneficiary) {
+    function CommonBsPresale(address _owner, address _token, address _beneficiary) public {
         token = CommonBsToken(_token);
-        owner = msg.sender;
+        owner = _owner;
         notifier = owner;
         beneficiary = _beneficiary;
         startTime = now;
@@ -439,10 +423,6 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
     // Override this method to mock current time.
     function getNow() public constant returns (uint) {
         return now;
-    }
-
-    function setSaleEnabled(bool _enabled) public onlyOwner {
-        saleEnabled = _enabled;
     }
 
     function setBeneficiary(address _beneficiary) public onlyOwner {
@@ -459,7 +439,7 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
      * The fallback function corresponds to a donation in ETH
      */
     function() public payable {
-        if (saleEnabled) sellTokensForEth(msg.sender, msg.value);
+        sellTokensForEth(msg.sender, msg.value);
     }
 
     function sellTokensForEth(address _buyer, uint256 _amountWei) internal ifNotPaused respectTimeFrame {
@@ -491,11 +471,12 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
     // Begin of external sales.
 
     function externalSales(
-        uint8[] _currencies,
+        uint8[]   _currencies,
         bytes32[] _txIdSha3,
         address[] _buyers,
         uint256[] _amountsWei,
-        uint256[] _tokensE18
+        uint256[] _tokensE18,
+        bool      _useRequire
     ) public ifNotPaused canNotify {
 
         require(_currencies.length > 0);
@@ -510,102 +491,110 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
                 _txIdSha3[i],
                 _buyers[i],
                 _amountsWei[i],
-                _tokensE18[i]
+                _tokensE18[i],
+                _useRequire
             );
         }
     }
 
     function _externalSaleSha3(
         Currency _currency,
-        bytes32 _txIdSha3, // To get bytes32 use keccak256(txId) OR sha3(txId)
-        address _buyer,
-        uint256 _amountWei,
-        uint256 _tokensE18
+        bytes32  _txIdSha3, // To get bytes32 use keccak256(txId) OR sha3(txId)
+        address  _buyer,
+        uint256  _amountWei,
+        uint256  _tokensE18,
+        bool     _useRequire
     ) internal {
 
-        require(_buyer > 0 && _amountWei > 0 && _tokensE18 > 0);
+        var argsAreValid = _buyer > 0 && _amountWei > 0 && _tokensE18 > 0;
+        if (_useRequire) require(argsAreValid);
+        else if (!argsAreValid) return;
 
         var txsByCur = externalTxs[uint8(_currency)];
 
         // If this foreign transaction has been already processed in this contract.
-        require(txsByCur[_txIdSha3] == 0);
-
-        totalInWei = safeAdd(totalInWei, _amountWei);
-        require(totalInWei <= maxCapWei); // Max cap should not be reached yet.
-
-        require(token.sell(_buyer, _tokensE18)); // Transfer tokens to buyer.
-        totalTokensSold = safeAdd(totalTokensSold, _tokensE18);
-        totalExternalSales++;
-
+        var tokensNotIssuedYet = txsByCur[_txIdSha3] == 0;
+        if (_useRequire) require(tokensNotIssuedYet);
+        else if (!tokensNotIssuedYet) return;
+        
+        var tokensIssued = token.sell(_buyer, _tokensE18);
+        if (_useRequire) require(tokensIssued);
+        else if (!tokensIssued) return;
+        
         txsByCur[_txIdSha3] = _tokensE18;
         ExternalSale(_currency, _txIdSha3, _buyer, _amountWei, _tokensE18);
+        
+        // Update stats
+        totalExternalSales++;
+        totalTokensSold = safeAdd(totalTokensSold, _tokensE18);
+        totalInWei = safeAdd(totalInWei, _amountWei);
     }
 
     // Get id of currency enum. --------------------------------------------
 
-    function btcId() public constant returns (uint8) {
+    function btcId() public pure returns (uint8) {
         return uint8(Currency.BTC);
     }
 
-    function ltcId() public constant returns (uint8) {
+    function ltcId() public pure returns (uint8) {
         return uint8(Currency.LTC);
     }
 
-    function zecId() public constant returns (uint8) {
+    function zecId() public pure returns (uint8) {
         return uint8(Currency.ZEC);
     }
 
-    function dashId() public constant returns (uint8) {
+    function dashId() public pure returns (uint8) {
         return uint8(Currency.DASH);
     }
 
-    function wavesId() public constant returns (uint8) {
+    function wavesId() public pure returns (uint8) {
         return uint8(Currency.WAVES);
     }
 
-    function usdId() public constant returns (uint8) {
+    function usdId() public pure returns (uint8) {
         return uint8(Currency.USD);
     }
 
-    function eurId() public constant returns (uint8) {
+    function eurId() public pure returns (uint8) {
         return uint8(Currency.EUR);
     }
 
     // Get token count by transaction id. ----------------------------------
 
-    function _tokensByTx(Currency _currency, string _txId) internal constant returns (uint256) {
+    function _tokensByTx(Currency _currency, string _txId) internal view returns (uint256) {
         return tokensByTx(uint8(_currency), _txId);
     }
 
-    function tokensByTx(uint8 _currency, string _txId) public constant returns (uint256) {
+    function tokensByTx(uint8 _currency, string _txId) public view returns (uint256) {
         return externalTxs[_currency][keccak256(_txId)];
     }
-
-    function tokensByBtcTx(string _txId) public constant returns (uint256) {
+    
+    function tokensByBtcTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.BTC, _txId);
     }
 
-    function tokensByLtcTx(string _txId) public constant returns (uint256) {
+    function tokensByLtcTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.LTC, _txId);
     }
 
-    function tokensByZecTx(string _txId) public constant returns (uint256) {
+    function tokensByZecTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.ZEC, _txId);
     }
 
-    function tokensByDashTx(string _txId) public constant returns (uint256) {
+    function tokensByDashTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.DASH, _txId);
     }
 
-    function tokensByWavesTx(string _txId) public constant returns (uint256) {
+    function tokensByWavesTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.WAVES, _txId);
     }
 
-    function tokensByUsdTx(string _txId) public constant returns (uint256) {
+    function tokensByUsdTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.USD, _txId);
     }
 
-    function tokensByEurTx(string _txId) public constant returns (uint256) {
+    function tokensByEurTx(string _txId) public view returns (uint256) {
         return _tokensByTx(Currency.EUR, _txId);
     }
 
@@ -629,28 +618,42 @@ contract CommonBsPresale is SafeMath, Ownable, Pausable {
         return getNow() > endTime;
     }
 
-    function isFinalized() public constant returns (bool) {
-        return finalizedTime > 0;
-    }
-
-    /*
-     * Finalize the crowdsale. Raised money can be sent to beneficiary only if crowdsale hit end time or max cap.
-     */
-    function finalize() public onlyOwner {
-
-        // Cannot finalise before end day of crowdsale until max cap is reached.
-        require(isMaxCapReached() || isSaleOver());
-
+    function withdraw() public onlyOwner {
         beneficiary.transfer(this.balance);
-
-        finalizedTime = getNow();
     }
+}
+
+
+contract KriptToken is CommonBsToken {
+
+    function KriptToken() public CommonBsToken(
+        0x2155f24b0B28CA4888eddeCaE5f0583fB85A123F,     // TODO address _seller (main holder of all tokens)
+        'Kript Token',
+        'KRPT',
+        100 * 1e6, // Max token supply.
+        40 * 1e6   // Sale limit - max tokens that can be sold through all tiers of tokensale.
+    ) {}
 }
 
 contract KriptPresale is CommonBsPresale {
 
-    function KriptPresale() CommonBsPresale(
-        0x111, // TODO address _token
-        0x222  // TODO address _beneficiary
+    function KriptPresale(address _owner, address _token) public CommonBsPresale(
+        _owner,
+        _token,
+        0xABc6FEEbBe3f5f06c1544114A6f5114fdea88D9b  // TODO address _beneficiary
     ) {}
+}
+
+contract Deploy {
+    
+    KriptToken public token;
+    KriptPresale public presale;
+    
+    function Deploy() public {
+        address owner = msg.sender;
+        token = new KriptToken();
+        presale = new KriptPresale(owner, token);
+        token.addOwner(owner);
+        token.addOwner(presale);
+    }
 }
